@@ -620,7 +620,7 @@ Players.LocalPlayer.OnTeleport:Connect(function(State)
         -- Usa queueonteleport para executar o script na nova place
         queueonteleport([[
             task.wait(3)
-            loadstring(game:HttpGet("https://github.com/LeviMods64/uiLIB/raw/refs/heads/main/kill%20hub.lua"))()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/LeviMods64/uiLIB/main/kill%20hub.lua"))()
         ]])
         
         Fluent:Notify({
