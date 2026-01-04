@@ -37,7 +37,7 @@ local UseFugaSkill = false
 local CurrentSkill = "Punch"
 
 -- ===============================
--- RAID VARIABLES (SEPARADO)
+-- RAID VARIABLES
 -- ===============================
 local RaidAutoAttackEnabled = false
 local RaidAttackCooldown = 0.3
@@ -51,10 +51,11 @@ local RaidUseFugaSkill = false
 local RaidCurrentSkill = "Punch"
 
 -- ===============================
--- AUTO RETRY RAID VARIABLES (NOVO!)
+-- AUTO RETRY RAID VARIABLES
 -- ===============================
 local AutoRetryRaidEnabled = false
 local RetryRaidInterval = 5
+local RaidHUDStatus = "Aguardando..."
 
 -- ===============================
 -- AUTO EXECUTE ON TELEPORT SYSTEM
@@ -149,17 +150,110 @@ LocalPlayer.OnTeleport:Connect(function(state, placeId, spawnName)
 end)
 
 -- ===============================
--- AUTO RETRY RAID FUNCTION (NOVO!)
+-- AUTO RETRY RAID FUNCTIONS
 -- ===============================
-local function autoRetryRaid()
-    while AutoRetryRaidEnabled do
-        pcall(function()
-            game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
-            print("[Auto Retry] Tentando reentrar na Raid...")
-        end)
+
+-- Debug: Lista elementos do PlayerGui
+local function debugPlayerGui()
+    pcall(function()
+        local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
+        print("\n[DEBUG] === PlayerGui Contents ===")
+        for _, child in pairs(playerGui:GetChildren()) do
+            print("  >", child.Name, "| Class:", child.ClassName)
+            if child.Name:lower():find("raid") then
+                print("    [RAID RELATED! Checking children...]")
+                for _, sub in pairs(child:GetChildren()) do
+                    local visibleStr = ""
+                    if sub:IsA("GuiObject") then
+                        visibleStr = " | Visible: " .. tostring(sub.Visible)
+                    end
+                    print("      -", sub.Name, "| Class:", sub.ClassName .. visibleStr)
+                end
+            end
+        end
+        print("[DEBUG] === End ===\n")
+    end)
+end
+
+-- Verifica se RaidHUD está visível
+local function isRaidHUDVisible()
+    local success, result = pcall(function()
+        local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
+        local raidHUD = playerGui:FindFirstChild("RaidHUD")
         
+        if not raidHUD then
+            return false
+        end
+        
+        -- Método 1: Verifica Frame diretamente
+        local frame = raidHUD:FindFirstChild("Frame")
+        if frame and frame:IsA("GuiObject") then
+            return frame.Visible == true
+        end
+        
+        -- Método 2: Verifica qualquer filho visível
+        for _, child in pairs(raidHUD:GetChildren()) do
+            if child:IsA("GuiObject") and child.Visible == true then
+                return true
+            end
+        end
+        
+        return false
+    end)
+    
+    return success and result or false
+end
+
+-- Loop principal do Auto Retry
+local function autoRetryRaid()
+    local lastState = nil
+    local retryCount = 0
+    
+    print("[Auto Retry] Sistema iniciado!")
+    debugPlayerGui()
+    
+    while AutoRetryRaidEnabled do
+        local isVisible = isRaidHUDVisible()
+        
+        -- Atualiza status
+        if isVisible then
+            RaidHUDStatus = "RaidHUD Visivel - Reentrando..."
+        else
+            RaidHUDStatus = "RaidHUD Oculto - Em Raid..."
+        end
+        
+        -- Log de debug
+        if isVisible ~= lastState then
+            print("[Auto Retry] Estado mudou! RaidHUD Visible:", isVisible)
+        end
+        
+        -- Se RaidHUD está visível, tenta reentrar
+        if isVisible == true then
+            -- Notifica na primeira detecção
+            if lastState ~= true then
+                retryCount = 0
+                Fluent:Notify({
+                    Title = "Raid Finalizada!",
+                    Content = "Detectado! Tentando reentrar...",
+                    Duration = 2
+                })
+            end
+            
+            -- Tenta o retry
+            retryCount = retryCount + 1
+            print("[Auto Retry] Tentativa #" .. retryCount)
+            
+            pcall(function()
+                game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
+            end)
+        end
+        
+        lastState = isVisible
         task.wait(RetryRaidInterval)
     end
+    
+    RaidHUDStatus = "Desativado"
+    print("[Auto Retry] Sistema encerrado.")
 end
 
 -- ===============================
@@ -885,14 +979,14 @@ local RaidSpeedSlider = Tabs.Raid:AddSlider("RaidTweenSpeed", {
 })
 
 -- ===============================
--- AUTO RETRY RAID SECTION (NOVO!)
+-- AUTO RETRY RAID SECTION
 -- ===============================
 
 local RetryRaidSection = Tabs.Raid:AddSection("Auto Retry Raid")
 
 local AutoRetryToggle = Tabs.Raid:AddToggle("AutoRetryRaid", {
     Title = "Auto Retry Raid",
-    Description = "Tenta reentrar na Raid automaticamente",
+    Description = "Reentra automaticamente quando RaidHUD aparece",
     Default = false,
     Callback = function(Value)
         AutoRetryRaidEnabled = Value
@@ -902,10 +996,12 @@ local AutoRetryToggle = Tabs.Raid:AddToggle("AutoRetryRaid", {
             
             Fluent:Notify({
                 Title = "Auto Retry Raid",
-                Content = "Ativado! Tentando a cada " .. RetryRaidInterval .. "s",
+                Content = "Ativado! Monitorando RaidHUD...",
                 Duration = 3
             })
         else
+            RaidHUDStatus = "Desativado"
+            
             Fluent:Notify({
                 Title = "Auto Retry Raid",
                 Content = "Desativado!",
@@ -917,7 +1013,7 @@ local AutoRetryToggle = Tabs.Raid:AddToggle("AutoRetryRaid", {
 
 local RetryIntervalSlider = Tabs.Raid:AddSlider("RetryRaidInterval", {
     Title = "Retry Interval",
-    Description = "Intervalo entre tentativas (segundos)",
+    Description = "Intervalo entre verificações (segundos)",
     Default = 5,
     Min = 1,
     Max = 30,
@@ -927,10 +1023,44 @@ local RetryIntervalSlider = Tabs.Raid:AddSlider("RetryRaidInterval", {
     end
 })
 
--- Info da Raid
+-- Botão de Debug
+Tabs.Raid:AddButton({
+    Title = "Debug RaidHUD",
+    Description = "Mostra info do RaidHUD no console (F9)",
+    Callback = function()
+        debugPlayerGui()
+        
+        local isVisible = isRaidHUDVisible()
+        
+        Fluent:Notify({
+            Title = "RaidHUD Debug",
+            Content = "Visible: " .. tostring(isVisible) .. "\nAbra o console (F9) para detalhes!",
+            Duration = 4
+        })
+    end
+})
+
+-- Botão de Retry Manual
+Tabs.Raid:AddButton({
+    Title = "Retry Raid Manual",
+    Description = "Força reentrada na Raid",
+    Callback = function()
+        pcall(function()
+            game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
+        end)
+        
+        Fluent:Notify({
+            Title = "Retry Enviado!",
+            Content = "Comando de retry executado.",
+            Duration = 2
+        })
+    end
+})
+
+-- Info
 Tabs.Raid:AddParagraph({
     Title = "Raid Info",
-    Content = "Use esta aba para configurar o farm em Raids.\n\nAuto Retry: Reentra automaticamente quando a Raid termina.\n\nDica: Aumente o Range e Speed para Raids!"
+    Content = "RaidHUD.Frame.Visible = true -> Raid terminou\nRaidHUD.Frame.Visible = false -> Ainda na Raid\n\nUse o botao Debug para verificar o estado!"
 })
 
 -- ===============================
@@ -965,6 +1095,8 @@ task.spawn(function()
         local raidSkill = RaidUseFugaSkill and "Fuga" or "Punch"
         local raidTweenStatus = RaidTweenToMobEnabled and "ON" or "OFF"
         local autoRetryStatus = AutoRetryRaidEnabled and "ON" or "OFF"
+        local raidHUDVisible = isRaidHUDVisible()
+        local raidHUDText = raidHUDVisible and "VISIVEL (Retry!)" or "OCULTO (Em Raid)"
 
         local elapsedTime = math.floor(os.clock() - startTime)
         local minutes = math.floor(elapsedTime / 60)
@@ -991,6 +1123,7 @@ task.spawn(function()
                 "Raid Skill: %s\n" ..
                 "Raid Tween: %s\n" ..
                 "Auto Retry: %s (%ds)\n" ..
+                "RaidHUD: %s\n" ..
                 "\n=== INFO ===\n" ..
                 "Slot: %d\n" ..
                 "Auto Quest: %s\n" ..
@@ -1009,6 +1142,7 @@ task.spawn(function()
                 raidTweenStatus,
                 autoRetryStatus,
                 RetryRaidInterval,
+                raidHUDText,
                 slot,
                 autoAcceptStatus,
                 autoExecuteStatus,
@@ -1024,6 +1158,7 @@ task.spawn(function()
                 "Raid Aura: OFF\n" ..
                 "Raid Skill: %s\n" ..
                 "Auto Retry: %s (%ds)\n" ..
+                "RaidHUD: %s\n" ..
                 "\n=== INFO ===\n" ..
                 "Slot: %d\n" ..
                 "Quest NPC: %s\n" ..
@@ -1035,6 +1170,7 @@ task.spawn(function()
                 raidSkill,
                 autoRetryStatus,
                 RetryRaidInterval,
+                raidHUDText,
                 slot,
                 questTarget,
                 autoAcceptStatus,
