@@ -51,11 +51,10 @@ local RaidUseFugaSkill = false
 local RaidCurrentSkill = "Punch"
 
 -- ===============================
--- AUTO RETRY RAID VARIABLES
+-- AUTO RETRY VARIABLES
 -- ===============================
-local AutoRetryRaidEnabled = false
-local RetryRaidInterval = 5
-local RaidHUDStatus = "Aguardando..."
+local HadMobsBefore = false
+local IsRetrying = false
 
 -- ===============================
 -- AUTO EXECUTE ON TELEPORT SYSTEM
@@ -63,7 +62,6 @@ local RaidHUDStatus = "Aguardando..."
 local AutoExecuteOnTeleport = false
 local SCRIPT_URL = "https://raw.githubusercontent.com/LeviMods64/uiLIB/refs/heads/main/kill%20hub.lua"
 
--- Função para obter queue_on_teleport compatível
 local function getQueueFunction()
     if syn and syn.queue_on_teleport then
         return syn.queue_on_teleport, "Synapse X"
@@ -104,157 +102,32 @@ end
 local QueueFunction, ExecutorName = getQueueFunction()
 local IsExecutorSupported = QueueFunction ~= nil
 
--- Função para fazer queue do script
 local function queueScriptForTeleport()
-    if not QueueFunction then
-        warn("[AutoExecute] Executor não suporta queue_on_teleport!")
-        return false
-    end
-    
-    if not AutoExecuteOnTeleport then
-        return false
-    end
+    if not QueueFunction then return false end
+    if not AutoExecuteOnTeleport then return false end
     
     local scriptCode = [[
 repeat task.wait() until game:IsLoaded()
 task.wait(3)
-
-local success, err = pcall(function()
+pcall(function()
     loadstring(game:HttpGet("]] .. SCRIPT_URL .. [["))()
 end)
-
-if not success then
-    warn("[AutoExecute] Erro ao carregar: " .. tostring(err))
-end
 ]]
     
-    local success = pcall(function()
+    pcall(function()
         QueueFunction(scriptCode)
     end)
     
-    if success then
-        print("[AutoExecute] Script em queue para próximo teleport!")
-    end
-    
-    return success
+    return true
 end
 
--- Detectar teleport
 LocalPlayer.OnTeleport:Connect(function(state, placeId, spawnName)
     if state == Enum.TeleportState.Started then
         if AutoExecuteOnTeleport then
-            print("[AutoExecute] Teleport detectado para PlaceId:", placeId)
             queueScriptForTeleport()
         end
     end
 end)
-
--- ===============================
--- AUTO RETRY RAID FUNCTIONS
--- ===============================
-
--- Debug: Lista elementos do PlayerGui
-local function debugPlayerGui()
-    pcall(function()
-        local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
-        print("\n[DEBUG] === PlayerGui Contents ===")
-        for _, child in pairs(playerGui:GetChildren()) do
-            print("  >", child.Name, "| Class:", child.ClassName)
-            if child.Name:lower():find("raid") then
-                print("    [RAID RELATED! Checking children...]")
-                for _, sub in pairs(child:GetChildren()) do
-                    local visibleStr = ""
-                    if sub:IsA("GuiObject") then
-                        visibleStr = " | Visible: " .. tostring(sub.Visible)
-                    end
-                    print("      -", sub.Name, "| Class:", sub.ClassName .. visibleStr)
-                end
-            end
-        end
-        print("[DEBUG] === End ===\n")
-    end)
-end
-
--- Verifica se RaidHUD está visível
-local function isRaidHUDVisible()
-    local success, result = pcall(function()
-        local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
-        local raidHUD = playerGui:FindFirstChild("RaidHUD")
-        
-        if not raidHUD then
-            return false
-        end
-        
-        -- Método 1: Verifica Frame diretamente
-        local frame = raidHUD:FindFirstChild("Frame")
-        if frame and frame:IsA("GuiObject") then
-            return frame.Visible == true
-        end
-        
-        -- Método 2: Verifica qualquer filho visível
-        for _, child in pairs(raidHUD:GetChildren()) do
-            if child:IsA("GuiObject") and child.Visible == true then
-                return true
-            end
-        end
-        
-        return false
-    end)
-    
-    return success and result or false
-end
-
--- Loop principal do Auto Retry
-local function autoRetryRaid()
-    local lastState = nil
-    local retryCount = 0
-    
-    print("[Auto Retry] Sistema iniciado!")
-    debugPlayerGui()
-    
-    while AutoRetryRaidEnabled do
-        local isVisible = isRaidHUDVisible()
-        
-        -- Atualiza status
-        if isVisible then
-            RaidHUDStatus = "RaidHUD Visivel - Reentrando..."
-        else
-            RaidHUDStatus = "RaidHUD Oculto - Em Raid..."
-        end
-        
-        -- Log de debug
-        if isVisible ~= lastState then
-            print("[Auto Retry] Estado mudou! RaidHUD Visible:", isVisible)
-        end
-        
-        -- Se RaidHUD está visível, tenta reentrar
-        if isVisible == true then
-            -- Notifica na primeira detecção
-            if lastState ~= true then
-                retryCount = 0
-                Fluent:Notify({
-                    Title = "Raid Finalizada!",
-                    Content = "Detectado! Tentando reentrar...",
-                    Duration = 2
-                })
-            end
-            
-            -- Tenta o retry
-            retryCount = retryCount + 1
-            print("[Auto Retry] Tentativa #" .. retryCount)
-            
-            pcall(function()
-                game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
-            end)
-        end
-        
-        lastState = isVisible
-        task.wait(RetryRaidInterval)
-    end
-    
-    RaidHUDStatus = "Desativado"
-    print("[Auto Retry] Sistema encerrado.")
-end
 
 -- ===============================
 -- WINDOW SETUP
@@ -708,7 +581,7 @@ local function autoAttack()
 end
 
 -- ===============================
--- RAID: AUTO ATTACK LOOP
+-- RAID: AUTO ATTACK LOOP (COM AUTO RETRY)
 -- ===============================
 
 local function raidAutoAttack()
@@ -722,7 +595,11 @@ local function raidAutoAttack()
     
     local targetEnemy, distance = getRaidNearestEnemy()
     
+    -- Se tem mob, ataca
     if targetEnemy then
+        HadMobsBefore = true
+        IsRetrying = false
+        
         if RaidTweenToMobEnabled and distance > RaidAttackRange * 0.8 then
             raidTweenToMob(targetEnemy)
             task.wait(0.1)
@@ -742,6 +619,41 @@ local function raidAutoAttack()
                 
                 RaidLastAttackTime = currentTime
             end
+        end
+    else
+        -- Não tem mais mob - se tinha antes, faz retry
+        if HadMobsBefore and not IsRetrying then
+            IsRetrying = true
+            HadMobsBefore = false
+            
+            print("[Auto Retry] Todos mobs morreram! Aguardando 5 segundos...")
+            
+            Fluent:Notify({
+                Title = "Raid Finalizada!",
+                Content = "Reentrando em 5 segundos...",
+                Duration = 5
+            })
+            
+            -- Executa retry após 5 segundos
+            task.spawn(function()
+                task.wait(5)
+                
+                if RaidAutoAttackEnabled then
+                    pcall(function()
+                        game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
+                    end)
+                    
+                    print("[Auto Retry] RetryRaid executado!")
+                    
+                    Fluent:Notify({
+                        Title = "Auto Retry",
+                        Content = "Reentrando na Raid!",
+                        Duration = 2
+                    })
+                end
+                
+                IsRetrying = false
+            end)
         end
     end
 end
@@ -871,11 +783,13 @@ local AutoAcceptToggle = Tabs.Farm:AddToggle("AutoAcceptQuest", {
 local RaidAttackSection = Tabs.Raid:AddSection("Raid Auto Attack")
 
 local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
-    Title = "Raid Kill Aura",
-    Description = "Ataca automaticamente inimigos na Raid",
+    Title = "Raid Kill Aura (Auto Retry)",
+    Description = "Ataca mobs e reentra automaticamente quando morrem",
     Default = false,
     Callback = function(Value)
         RaidAutoAttackEnabled = Value
+        HadMobsBefore = false
+        IsRetrying = false
         
         if Value then
             if not RaidAttackConnection then
@@ -884,7 +798,7 @@ local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
             
             Fluent:Notify({
                 Title = "Raid Kill Aura",
-                Content = "Ativado! Atacando inimigos...",
+                Content = "Ativado! Auto Retry após mobs morrerem.",
                 Duration = 2
             })
         else
@@ -904,12 +818,6 @@ local RaidFugaToggle = Tabs.Raid:AddToggle("RaidUseFuga", {
     Callback = function(Value)
         RaidUseFugaSkill = Value
         RaidCurrentSkill = Value and "Fuga" or "Punch"
-        
-        Fluent:Notify({
-            Title = "Raid Skill",
-            Content = "Usando: " .. RaidCurrentSkill,
-            Duration = 2
-        })
     end
 })
 
@@ -946,22 +854,8 @@ local RaidTweenToggle = Tabs.Raid:AddToggle("RaidTweenToMob", {
     Callback = function(Value)
         RaidTweenToMobEnabled = Value
         
-        if Value then
-            Fluent:Notify({
-                Title = "Raid Tween",
-                Content = "Ativado! Indo até os inimigos...",
-                Duration = 2
-            })
-        else
-            if RaidCurrentTween then
-                RaidCurrentTween:Cancel()
-            end
-            
-            Fluent:Notify({
-                Title = "Raid Tween",
-                Content = "Desativado!",
-                Duration = 2
-            })
+        if not Value and RaidCurrentTween then
+            RaidCurrentTween:Cancel()
         end
     end
 })
@@ -978,89 +872,10 @@ local RaidSpeedSlider = Tabs.Raid:AddSlider("RaidTweenSpeed", {
     end
 })
 
--- ===============================
--- AUTO RETRY RAID SECTION
--- ===============================
-
-local RetryRaidSection = Tabs.Raid:AddSection("Auto Retry Raid")
-
-local AutoRetryToggle = Tabs.Raid:AddToggle("AutoRetryRaid", {
-    Title = "Auto Retry Raid",
-    Description = "Reentra automaticamente quando RaidHUD aparece",
-    Default = false,
-    Callback = function(Value)
-        AutoRetryRaidEnabled = Value
-        
-        if Value then
-            task.spawn(autoRetryRaid)
-            
-            Fluent:Notify({
-                Title = "Auto Retry Raid",
-                Content = "Ativado! Monitorando RaidHUD...",
-                Duration = 3
-            })
-        else
-            RaidHUDStatus = "Desativado"
-            
-            Fluent:Notify({
-                Title = "Auto Retry Raid",
-                Content = "Desativado!",
-                Duration = 2
-            })
-        end
-    end
-})
-
-local RetryIntervalSlider = Tabs.Raid:AddSlider("RetryRaidInterval", {
-    Title = "Retry Interval",
-    Description = "Intervalo entre verificações (segundos)",
-    Default = 5,
-    Min = 1,
-    Max = 30,
-    Rounding = 0,
-    Callback = function(Value)
-        RetryRaidInterval = Value
-    end
-})
-
--- Botão de Debug
-Tabs.Raid:AddButton({
-    Title = "Debug RaidHUD",
-    Description = "Mostra info do RaidHUD no console (F9)",
-    Callback = function()
-        debugPlayerGui()
-        
-        local isVisible = isRaidHUDVisible()
-        
-        Fluent:Notify({
-            Title = "RaidHUD Debug",
-            Content = "Visible: " .. tostring(isVisible) .. "\nAbra o console (F9) para detalhes!",
-            Duration = 4
-        })
-    end
-})
-
--- Botão de Retry Manual
-Tabs.Raid:AddButton({
-    Title = "Retry Raid Manual",
-    Description = "Força reentrada na Raid",
-    Callback = function()
-        pcall(function()
-            game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
-        end)
-        
-        Fluent:Notify({
-            Title = "Retry Enviado!",
-            Content = "Comando de retry executado.",
-            Duration = 2
-        })
-    end
-})
-
--- Info
+-- Info da Raid
 Tabs.Raid:AddParagraph({
     Title = "Raid Info",
-    Content = "RaidHUD.Frame.Visible = true -> Raid terminou\nRaidHUD.Frame.Visible = false -> Ainda na Raid\n\nUse o botao Debug para verificar o estado!"
+    Content = "O Raid Kill Aura já inclui Auto Retry!\nQuando todos os mobs morrerem, espera 5 segundos e reentra automaticamente."
 })
 
 -- ===============================
@@ -1082,21 +897,16 @@ task.spawn(function()
         end
 
         local slot = CurrentSlot or 0
-        local cooldown = AttackCooldown or 0
-        local range = AttackRange or 0
         local questTarget = SelectedNPC or "N/A"
         local autoAcceptStatus = AutoAcceptQuestEnabled and "ON" or "OFF"
         local autoExecuteStatus = AutoExecuteOnTeleport and "ON" or "OFF"
         local tweenStatus = TweenToMobEnabled and "ON" or "OFF"
         local skillName = UseFugaSkill and "Fuga" or "Punch"
         
-        -- Raid Status
         local raidStatus = RaidAutoAttackEnabled and "ON" or "OFF"
         local raidSkill = RaidUseFugaSkill and "Fuga" or "Punch"
         local raidTweenStatus = RaidTweenToMobEnabled and "ON" or "OFF"
-        local autoRetryStatus = AutoRetryRaidEnabled and "ON" or "OFF"
-        local raidHUDVisible = isRaidHUDVisible()
-        local raidHUDText = raidHUDVisible and "VISIVEL (Retry!)" or "OCULTO (Em Raid)"
+        local retryStatus = IsRetrying and "Aguardando..." or "Pronto"
 
         local elapsedTime = math.floor(os.clock() - startTime)
         local minutes = math.floor(elapsedTime / 60)
@@ -1122,8 +932,7 @@ task.spawn(function()
                 "Raid Distance: %.1f studs\n" ..
                 "Raid Skill: %s\n" ..
                 "Raid Tween: %s\n" ..
-                "Auto Retry: %s (%ds)\n" ..
-                "RaidHUD: %s\n" ..
+                "Auto Retry: %s\n" ..
                 "\n=== INFO ===\n" ..
                 "Slot: %d\n" ..
                 "Auto Quest: %s\n" ..
@@ -1136,13 +945,11 @@ task.spawn(function()
                 skillName,
                 tweenStatus,
                 raidStatus,
-                raidEnemy and raidEnemy.Name or "Procurando...",
+                raidEnemy and raidEnemy.Name or "Nenhum (Retry em breve)",
                 raidDist or 0,
                 raidSkill,
                 raidTweenStatus,
-                autoRetryStatus,
-                RetryRaidInterval,
-                raidHUDText,
+                retryStatus,
                 slot,
                 autoAcceptStatus,
                 autoExecuteStatus,
@@ -1157,8 +964,6 @@ task.spawn(function()
                 "\n=== RAID ===\n" ..
                 "Raid Aura: OFF\n" ..
                 "Raid Skill: %s\n" ..
-                "Auto Retry: %s (%ds)\n" ..
-                "RaidHUD: %s\n" ..
                 "\n=== INFO ===\n" ..
                 "Slot: %d\n" ..
                 "Quest NPC: %s\n" ..
@@ -1168,9 +973,6 @@ task.spawn(function()
                 "Time: %s",
                 skillName,
                 raidSkill,
-                autoRetryStatus,
-                RetryRaidInterval,
-                raidHUDText,
                 slot,
                 questTarget,
                 autoAcceptStatus,
@@ -1203,7 +1005,7 @@ local AutoExecToggle = Tabs.Settings:AddToggle("AutoExecuteToggle", {
         if not IsExecutorSupported then
             Fluent:Notify({
                 Title = "Não Suportado",
-                Content = "Seu executor (" .. ExecutorName .. ") não suporta queue_on_teleport!",
+                Content = "Seu executor não suporta queue_on_teleport!",
                 Duration = 4
             })
             return
@@ -1212,19 +1014,10 @@ local AutoExecToggle = Tabs.Settings:AddToggle("AutoExecuteToggle", {
         AutoExecuteOnTeleport = Value
         
         if Value then
-            local success = queueScriptForTeleport()
-            
-            if success then
-                Fluent:Notify({
-                    Title = "Auto Execute",
-                    Content = "Ativado! Script será recarregado após teleport.",
-                    Duration = 3
-                })
-            end
-        else
+            queueScriptForTeleport()
             Fluent:Notify({
                 Title = "Auto Execute",
-                Content = "Desativado!",
+                Content = "Ativado!",
                 Duration = 2
             })
         end
@@ -1262,4 +1055,3 @@ Fluent:Notify({
 
 print("[Kill Hub] Script carregado!")
 print("[Kill Hub] Executor:", ExecutorName)
-print("[Kill Hub] Queue Suportado:", IsExecutorSupported)
