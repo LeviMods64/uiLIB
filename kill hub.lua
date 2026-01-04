@@ -12,62 +12,50 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local LocalPlayer = Players.LocalPlayer
 
 -- ===============================
--- AUTO ATTACK VARIABLES
+-- VARIABLES
 -- ===============================
 local AutoAttackEnabled = false
 local AttackCooldown = 0.5
 local AttackRange = 20
 local LastAttackTime = 0
-local AttackConnection = nil
+local AttackConnection
 local TweenToMobEnabled = false
 local TweenSpeed = 100
-local CurrentTween = nil
+local CurrentTween
 local CurrentSlot = 0
-local AutoQuestEnabled = false
-local SelectedNPC = nil
+local SelectedNPC
 local AutoAcceptQuestEnabled = false
+local AutoExecuteOnTeleport = false
 
 -- ===============================
--- WINDOW SETUP
+-- WINDOW
 -- ===============================
-local Players = game:GetService("Players")
-local MarketplaceService = game:GetService("MarketplaceService")
-
-local Player = Players.LocalPlayer
 local GameName = MarketplaceService:GetProductInfo(game.PlaceId).Name
-
--- Configuração do Developer
 local DeveloperName = "papa_killll"
 
-local UserTitle
-local UserSubtitle
-local UserColor
+local UserTitle = LocalPlayer.DisplayName
+local UserSubtitle = "User"
+local UserColor = Color3.fromRGB(71,123,255)
 
-if Player.Name == DeveloperName then
+if LocalPlayer.Name == DeveloperName then
     UserTitle = DeveloperName
     UserSubtitle = "Developer"
-    UserColor = Color3.fromRGB(255, 85, 85)
-else
-    UserTitle = Player.DisplayName
-    UserSubtitle = "User"
-    UserColor = Color3.fromRGB(71, 123, 255)
+    UserColor = Color3.fromRGB(255,85,85)
 end
 
 local Window = Fluent:CreateWindow({
     Title = "Kill Hub",
-    SubTitle = "| " .. GameName .. " | by MrJimex", -- Nome do jogo
-    Search = true,
-    
+    SubTitle = "| "..GameName.." | by MrJimex",
     TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
+    Size = UDim2.fromOffset(580,460),
     Acrylic = true,
     Theme = "Arctic",
     MinimizeKey = Enum.KeyCode.LeftControl,
-
     UserInfo = true,
     UserInfoTop = true,
     UserInfoTitle = UserTitle,
@@ -75,542 +63,173 @@ local Window = Fluent:CreateWindow({
     UserInfoSubtitleColor = UserColor
 })
 
-local Minimizer = Fluent:CreateMinimizer({
-    Icon = "", -- you can put AssetId
-    Size = UDim2.fromOffset(44, 44),
-    Position = UDim2.new(0, 320, 0, 24),
-    Acrylic = true,
-    Corner = 10,
-    Transparency = 1,
-    Draggable = true,
-    Visible = true -- make minimizer visible on pc (DEFAULT TRUE), you can edit any setting in Minimizer variable. example: Minimizer.Visible = false
-})
-
-
-
 local Tabs = {
-    Farm = Window:AddTab({ Title = "Farm", Icon = "swords" }),
-    Stats = Window:AddTab({ Title = "Status", Icon = "server" }),
-    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+    Farm = Window:AddTab({Title="Farm",Icon="swords"}),
+    Stats = Window:AddTab({Title="Status",Icon="server"}),
+    Settings = Window:AddTab({Title="Settings",Icon="settings"})
 }
-
--- ===============================
--- MINIMIZER SETUP
--- ===============================
 
 -- ===============================
 -- CORE FUNCTIONS
 -- ===============================
-
--- Função para obter nil instances
-function getNil(name, class)
-    for _, v in pairs(getnilinstances()) do
-        if v.ClassName == class and v.Name == name then
-            return v
-        end
-    end
-end
-
--- Função para obter o personagem local do servidor
 local function getLocalServerCharacter()
-    local serverPlayers = Workspace.Characters.Server.Players:GetChildren()
-    
-    for _, char in pairs(serverPlayers) do
-        if char.Name:find(LocalPlayer.Name) or char.Name:find("Server") then
-            return char
+    for _,c in pairs(Workspace.Characters.Server.Players:GetChildren()) do
+        if c.Name:find(LocalPlayer.Name) then
+            return c
         end
     end
-    
-    return serverPlayers[1]
 end
 
--- Função para calcular distância
-local function getDistance(pos1, pos2)
-    return (pos1 - pos2).Magnitude
+local function getDistance(a,b)
+    return (a-b).Magnitude
 end
 
--- Função para trocar de slot
-local function switchSlot(slotNumber)
+local function switchSlot(slot)
     pcall(function()
-        local Event = game:GetService("ReplicatedStorage").NetworkComm.InventoryService.FocusItem_Method
-        Event:InvokeServer(slotNumber)
-        CurrentSlot = slotNumber
+        ReplicatedStorage.NetworkComm.InventoryService.FocusItem_Method:InvokeServer(slot)
+        CurrentSlot = slot
     end)
 end
 
--- Função para aceitar quest
-local function acceptQuest(npcName)
-    if not npcName then return false end
-    
-    pcall(function()
-        local Event = game:GetService("ReplicatedStorage").NetworkComm.QuestService.AcceptQuest_Method
-        Event:InvokeServer(npcName)
-    end)
-    
-    return true
-end
-
--- Função para obter lista de NPCs
-local function getNPCList()
-    local npcList = {}
-    local npcFolder = ReplicatedStorage.Assets.Models.Characters.Humanoid.NPCs
-    
-    if npcFolder then
-        for _, npc in pairs(npcFolder:GetChildren()) do
-            if npc:IsA("Model") then
-                table.insert(npcList, npc.Name)
-            end
-        end
-    end
-    
-    table.sort(npcList)
-    return npcList
-end
-
--- Função para obter o NPC mais próximo
 local function getNearestNPC()
-    local localChar = getLocalServerCharacter()
-    if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then
-        return nil
-    end
-    
-    local localPos = localChar.HumanoidRootPart.Position
-    local nearestNPC = nil
-    local shortestDistance = math.huge
-    
-    if not TweenToMobEnabled then
-        shortestDistance = AttackRange
-    end
-    
-    local npcsFolder = Workspace.Characters.Server.NPCs
-    if not npcsFolder then return nil end
-    
-    for _, npc in pairs(npcsFolder:GetChildren()) do
-        if npc:IsA("Model") and npc:FindFirstChild("Humanoid") then
-            -- Se auto quest está ativo, filtrar por NPC selecionado
-            if AutoQuestEnabled and SelectedNPC and npc.Name ~= SelectedNPC then
-                continue
-            end
-            
-            local humanoid = npc.Humanoid
-            
-            if humanoid.Health > 0 and npc:FindFirstChild("HumanoidRootPart") then
-                local distance = getDistance(localPos, npc.HumanoidRootPart.Position)
-                
-                if distance < shortestDistance then
-                    shortestDistance = distance
-                    nearestNPC = npc
-                end
+    local char = getLocalServerCharacter()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+
+    local nearest,dist = nil,AttackRange
+    for _,npc in pairs(Workspace.Characters.Server.NPCs:GetChildren()) do
+        if npc:FindFirstChild("Humanoid") and npc.Humanoid.Health > 0 then
+            if SelectedNPC and npc.Name ~= SelectedNPC then continue end
+            local d = getDistance(char.HumanoidRootPart.Position,npc.HumanoidRootPart.Position)
+            if d < dist then
+                dist = d
+                nearest = npc
             end
         end
     end
-    
-    return nearestNPC, shortestDistance
+    return nearest,dist
 end
 
--- Função para executar o ataque usando StartSkilll_Method
-local function performStartSkill(targetNPC)
-    local localChar = getLocalServerCharacter()
-    if not localChar then return false end
-    
-    pcall(function()
-        local args = {
-            [1] = "Punch",
-            [2] = localChar,
-            [3] = Vector3.new(0.918032169342041, 0, 0.3965059816837311),
-            [4] = 1,
-            [5] = 1
-        }
-        ReplicatedStorage.NetworkComm.SkillService.StartSkilll_Method:InvokeServer(unpack(args))
-    end)
-    
-    return true
-end
+local function attackNPC(npc)
+    local char = getLocalServerCharacter()
+    if not char then return end
 
--- Função para executar o dano usando DamageCharacter_Method
-local function performDamage(targetNPC)
-    local localChar = getLocalServerCharacter()
-    if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return false end
-    
-    pcall(function()
-        local args = {
-            [1] = {
-                [1] = targetNPC
-            },
-            [2] = true,
-            [3] = {
-                ["CanParry"] = false,
-                ["OnCharacterHit"] = function() end,
-                ["Origin"] = localChar.HumanoidRootPart.CFrame,
-                ["LocalCharacter"] = localChar,
-                ["WindowID"] = localChar.Name .. "_Punch",
-                ["Parries"] = {},
-                ["SkillID"] = "Punch"
-            }
-        }
-        ReplicatedStorage.NetworkComm.CombatService.DamageCharacter_Method:InvokeServer(unpack(args))
-    end)
-    
-    return true
-end
-
--- Função para teleportar/tween até o mob
-local function tweenToMob(targetNPC)
-    if not TweenToMobEnabled then return end
-    
-    local localChar = getLocalServerCharacter()
-    if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return end
-    if not targetNPC or not targetNPC:FindFirstChild("HumanoidRootPart") then return end
-    
-    local targetPos = targetNPC.HumanoidRootPart.Position
-    local currentPos = localChar.HumanoidRootPart.Position
-    local distance = getDistance(currentPos, targetPos)
-    
-    -- Se já está perto o suficiente, não precisa mover
-    if distance <= AttackRange * 0.8 then return end
-    
-    -- Cancelar tween anterior se existir
-    if CurrentTween then
-        CurrentTween:Cancel()
-    end
-    
-    -- Calcular posição ideal (um pouco antes do mob)
-    local direction = (targetPos - currentPos).Unit
-    local targetCFrame = CFrame.new(targetPos - (direction * (AttackRange * 0.6)))
-    
-    -- Criar tween
-    local tweenInfo = TweenInfo.new(
-        distance / TweenSpeed,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.Out
+    ReplicatedStorage.NetworkComm.SkillService.StartSkilll_Method:InvokeServer(
+        "Punch",char,Vector3.new(1,0,0),1,1
     )
-    
-    local TweenService = game:GetService("TweenService")
-    CurrentTween = TweenService:Create(
-        localChar.HumanoidRootPart,
-        tweenInfo,
-        {CFrame = targetCFrame}
-    )
-    
-    CurrentTween:Play()
+
+    ReplicatedStorage.NetworkComm.CombatService.DamageCharacter_Method:InvokeServer({
+        npc
+    },true,{
+        SkillID="Punch",
+        Origin=char.HumanoidRootPart.CFrame,
+        LocalCharacter=char
+    })
 end
 
--- Função principal de auto attack
 local function autoAttack()
     if not AutoAttackEnabled then return end
-    
-    local currentTime = tick()
-    
-    -- Auto aceitar quest se ativado
-    if AutoAcceptQuestEnabled and SelectedNPC then
-        acceptQuest(SelectedNPC)
-    end
-    
-    if currentTime - LastAttackTime < AttackCooldown then
-        return
-    end
-    
-    local targetNPC, distance = getNearestNPC()
-    
-    if targetNPC then
-        -- Mover até o mob se ativado e estiver longe
-        if TweenToMobEnabled and distance > AttackRange * 0.8 then
-            tweenToMob(targetNPC)
-            task.wait(0.1)
-        end
-        
-        -- Verificar se está no alcance antes de atacar
-        local localChar = getLocalServerCharacter()
-        if localChar and localChar:FindFirstChild("HumanoidRootPart") then
-            local currentDist = getDistance(
-                localChar.HumanoidRootPart.Position,
-                targetNPC.HumanoidRootPart.Position
-            )
-            
-            if currentDist <= AttackRange then
-                performStartSkill(targetNPC)
-                task.wait(0.05)
-                performDamage(targetNPC)
-                
-                LastAttackTime = currentTime
-            end
-        end
+    if tick()-LastAttackTime < AttackCooldown then return end
+
+    local npc,dist = getNearestNPC()
+    if npc then
+        attackNPC(npc)
+        LastAttackTime = tick()
     end
 end
 
 -- ===============================
--- FARM TAB UI
+-- FARM UI
 -- ===============================
-
-local AutoAttackSection = Tabs.Farm:AddSection("Auto Attack")
-
-local AutoAttackToggle = Tabs.Farm:AddToggle("AutoAttack", {
-    Title = "Kill Aura",
-    Description = "Ataca automaticamente NPCs próximos",
-    Default = false,
-    Callback = function(Value)
-        AutoAttackEnabled = Value
-        
-        if Value then
-            
-            
-            -- Criar conexão se não existir
-            if not AttackConnection then
-                AttackConnection = RunService.Heartbeat:Connect(autoAttack)
-            end
-        else
-            
-           
+Tabs.Farm:AddToggle("AutoAttack",{
+    Title="Kill Aura",
+    Default=false,
+    Callback=function(v)
+        AutoAttackEnabled=v
+        if v and not AttackConnection then
+            AttackConnection = RunService.Heartbeat:Connect(autoAttack)
         end
     end
 })
 
-local CooldownSlider = Tabs.Farm:AddSlider("AttackCooldown", {
-    Title = "Attack Cooldown",
-    Description = "Tempo entre ataques (segundos)",
-    Default = 0.2,
-    Min = 0.1,
-    Max = 2,
-    Rounding = 1,
-    Callback = function(Value)
-        AttackCooldown = Value
-    end
+Tabs.Farm:AddSlider("Cooldown",{
+    Title="Attack Cooldown",
+    Min=0.1,Max=2,Default=0.5,
+    Callback=function(v) AttackCooldown=v end
 })
 
-local RangeSlider = Tabs.Farm:AddSlider("AttackRange", {
-    Title = "Attack Range",
-    Description = "Alcance do ataque (studs)",
-    Default = 20,
-    Min = 5,
-    Max = 450,
-    Rounding = 0,
-    Callback = function(Value)
-        AttackRange = Value
-    end
+Tabs.Farm:AddSlider("Range",{
+    Title="Attack Range",
+    Min=5,Max=450,Default=20,
+    Callback=function(v) AttackRange=v end
 })
 
-local MovementSection = Tabs.Farm:AddSection("Movement")
-
-local TweenToggle = Tabs.Farm:AddToggle("TweenToMob", {
-    Title = "Tween to Mob",
-    Description = "Move automaticamente até os NPCs",
-    Default = false,
-    Callback = function(Value)
-        TweenToMobEnabled = Value
-        
-        if Value then
-            Fluent:Notify({
-                Title = "Tween to Mob",
-                Content = "Ativado! Seu personagem irá até os mobs.",
-                Duration = 2
-            })
-        else
-            Fluent:Notify({
-                Title = "Tween to Mob",
-                Content = "Desativado!",
-                Duration = 2
-            })
-            
-            -- Cancelar tween atual
-            if CurrentTween then
-                CurrentTween:Cancel()
-            end
-        end
-    end
+Tabs.Farm:AddSlider("Slot",{
+    Title="Inventory Slot",
+    Min=0,Max=5,Default=0,
+    Callback=function(v) switchSlot(v) end
 })
 
-local SpeedSlider = Tabs.Farm:AddSlider("TweenSpeed", {
-    Title = "Tween Speed",
-    Description = "Velocidade de movimento (studs/s)",
-    Default = 100,
-    Min = 50,
-    Max = 300,
-    Rounding = 0,
-    Callback = function(Value)
-        TweenSpeed = Value
-    end
+-- ===============================
+-- STATUS
+-- ===============================
+local Status = Tabs.Stats:AddParagraph({
+    Title="Status",
+    Content="Idle"
 })
-
-local InventorySection = Tabs.Farm:AddSection("Inventory")
-
-local SlotSlider = Tabs.Farm:AddSlider("InventorySlot", {
-    Title = "Inventory Slot",
-    Description = "",
-    Default = 0,
-    Min = 0,
-    Max = 5,
-    Rounding = 0,
-    Callback = function(Value)
-        switchSlot(Value)
-        Fluent:Notify({
-            Title = "Slot Changed",
-            Content = "Trocado para slot " .. Value,
-            Duration = 1.5
-        })
-    end
-})
-
-local QuestSection = Tabs.Farm:AddSection("Auto Quest")
-
-local NPCDropdown = Tabs.Farm:AddDropdown("SelectNPC", {
-    Title = "Select Target Npc Quest",
-    Description = "Escolha o NPC para farmar",
-    Values = getNPCList(),
-    Multi = false,
-    Default = 1,
-    Callback = function(Value)
-        SelectedNPC = Value
-        Fluent:Notify({
-            Title = "NPC Selected",
-            Content = "Alvo definido: " .. Value,
-            Duration = 1.5
-        })
-    end
-})
-
-local AutoAcceptToggle = Tabs.Farm:AddToggle("AutoAcceptQuest", {
-    Title = "Auto Quest",
-    Description = "Aceita automaticamente a quest do NPC selecionado",
-    Default = false,
-    Callback = function(Value)
-        AutoAcceptQuestEnabled = Value
-        
-        if Value then
-            if SelectedNPC then
-                
-                
-            else
-                
-                
-                AutoAcceptQuestEnabled = false
-            end
-        else
-            
-            
-        end
-    end
-})
-
-local bb =Tabs.Stats:AddParagraph({
-    Title = "Status",
-    Content = "Farm pronto para uso. Ative o toggle acima para começar."
-})
-
-local lastText = ""
-local startTime = os.clock()
 
 task.spawn(function()
-	while task.wait(1) do
-		if not bb or not bb.SetDesc then
-			break
-		end
-
-		local slot = CurrentSlot or 0
-		local cooldown = AttackCooldown or 0
-		local range = AttackRange or 0
-		local questTarget = SelectedNPC or "N/A"
-
-		local questStatus = AutoQuestEnabled
-			and ("Enabled (" .. questTarget .. ")")
-			or "Disabled"
-
-		local autoAcceptStatus = AutoAcceptQuestEnabled
-			and "Enabled"
-			or "Disabled"
-
-		local elapsedTime = math.floor(os.clock() - startTime)
-		local minutes = math.floor(elapsedTime / 60)
-		local seconds = elapsedTime % 60
-		local formattedTime = string.format("%02d:%02d", minutes, seconds)
-
-		local text
-
-		if AutoAttackEnabled then
-			local npc, dist = getNearestNPC()
-
-			if npc then
-				text = string.format(
-					"Kill Aura: Enabled\n" ..
-					"Target: %s\n" ..
-					"Distance: %.1f studs\n" ..
-					"Cooldown: %.1f s\n" ..
-					"Tween To Target: %s\n" ..
-					"Slot: %d\n" ..
-					"Quest Target: %s\n" ..
-					"Auto Quest: %s\n" ..
-					"Auto Accept Quest: %s\n" ..
-					"Active Time: %s",
-					npc.Name,
-					dist or 0,
-					cooldown,
-					TweenToMobEnabled and "Enabled" or "Disabled",
-					slot,
-					questTarget,
-					questStatus,
-					autoAcceptStatus,
-					formattedTime
-				)
-			else
-				text = string.format(
-					"Kill Aura: Enabled\n" ..
-					"No NPC in range\n" ..
-					"Range: %.0f studs\n" ..
-					"Cooldown: %.1f s\n" ..
-					"Tween To Target: %s\n" ..
-					"Slot: %d\n" ..
-					"Quest Target: %s\n" ..
-					"Auto Quest: %s\n" ..
-					"Auto Accept Quest: %s\n" ..
-					"Active Time: %s",
-					range,
-					cooldown,
-					TweenToMobEnabled and "Enabled" or "Disabled",
-					slot,
-					questTarget,
-					questStatus,
-					autoAcceptStatus,
-					formattedTime
-				)
-			end
-		else
-			text = string.format(
-				"Kill Aura: Disabled\n" ..
-				"Current Slot: %d\n" ..
-				"Quest Target: %s\n" ..
-				"Auto Quest: %s\n" ..
-				"Auto Accept Quest: %s\n" ..
-				"Active Time: %s",
-				slot,
-				questTarget,
-				questStatus,
-				autoAcceptStatus,
-				formattedTime
-			)
-		end
-
-		if text ~= lastText then
-			lastText = text
-			bb:SetDesc(text)
-		end
-	end
+    while task.wait(1) do
+        Status:SetDesc(
+            "Kill Aura: "..(AutoAttackEnabled and "Enabled" or "Disabled")..
+            "\nCooldown: "..AttackCooldown..
+            "\nRange: "..AttackRange..
+            "\nSlot: "..CurrentSlot
+        )
+    end
 end)
 
+-- ===============================
+-- AUTO EXECUTE (FINAL)
+-- ===============================
+Tabs.Settings:AddToggle("AutoExecute",{
+    Title="Auto Re-Execute on Teleport",
+    Description="Reexecuta o script automaticamente ao teleportar",
+    Default=false,
+    Callback=function(v)
+        AutoExecuteOnTeleport=v
+        _G.AutoExecuteOnTeleport=v
+
+        if v then
+            queueonteleport([[
+                task.wait(2)
+                loadstring(game:HttpGet("https://github.com/LeviMods64/uiLIB/raw/refs/heads/main/kill%20hub.lua"))()
+            ]])
+
+            Fluent:Notify({
+                Title="Auto Execute",
+                Content="Script serÃ¡ reexecutado apÃ³s teleport.",
+                Duration=3
+            })
+        end
+    end
+})
 
 -- ===============================
--- MANAGERS LOAD
+-- MANAGERS
 -- ===============================
 SaveManager:SetLibrary(Fluent)
 InterfaceManager:SetLibrary(Fluent)
-SaveManager:IgnoreThemeSettings()
-InterfaceManager:SetFolder("KillHub")
-SaveManager:SetFolder("KillHub/JujutsuZero")
+SaveManager:SetFolder("KillHub")
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 -- ===============================
--- TOGGLE GUI BUTTON
+-- FINAL
 -- ===============================
-
 Window:SelectTab(1)
-Fluent:Notify({ Title = "Kill Hub", Content = "Script Loaded Successfully!", Duration = 3 })
+Fluent:Notify({
+    Title="Kill Hub",
+    Content="Script Loaded Successfully!",
+    Duration=3
+})
 SaveManager:LoadAutoloadConfig()
