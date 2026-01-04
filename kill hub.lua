@@ -51,6 +51,12 @@ local RaidUseFugaSkill = false
 local RaidCurrentSkill = "Punch"
 
 -- ===============================
+-- AUTO RETRY RAID VARIABLES (NOVO!)
+-- ===============================
+local AutoRetryRaidEnabled = false
+local RetryRaidInterval = 5
+
+-- ===============================
 -- AUTO EXECUTE ON TELEPORT SYSTEM
 -- ===============================
 local AutoExecuteOnTeleport = false
@@ -126,7 +132,7 @@ end
     end)
     
     if success then
-        print("[AutoExecute]  Script em queue para próximo teleport!")
+        print("[AutoExecute] Script em queue para próximo teleport!")
     end
     
     return success
@@ -136,11 +142,25 @@ end
 LocalPlayer.OnTeleport:Connect(function(state, placeId, spawnName)
     if state == Enum.TeleportState.Started then
         if AutoExecuteOnTeleport then
-            print("[AutoExecute]  Teleport detectado para PlaceId:", placeId)
+            print("[AutoExecute] Teleport detectado para PlaceId:", placeId)
             queueScriptForTeleport()
         end
     end
 end)
+
+-- ===============================
+-- AUTO RETRY RAID FUNCTION (NOVO!)
+-- ===============================
+local function autoRetryRaid()
+    while AutoRetryRaidEnabled do
+        pcall(function()
+            game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
+            print("[Auto Retry] Tentando reentrar na Raid...")
+        end)
+        
+        task.wait(RetryRaidInterval)
+    end
+end
 
 -- ===============================
 -- WINDOW SETUP
@@ -191,7 +211,7 @@ local Minimizer = Fluent:CreateMinimizer({
 
 local Tabs = {
     Farm = Window:AddTab({ Title = "Farm", Icon = "swords" }),
-    Raid = Window:AddTab({ Title = "Raid", Icon = "skull" }),  -- NOVA ABA
+    Raid = Window:AddTab({ Title = "Raid", Icon = "skull" }),
     Stats = Window:AddTab({ Title = "Status", Icon = "server" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
@@ -311,7 +331,7 @@ local function getNearestNPC()
 end
 
 -- ===============================
--- RAID: GET NEAREST ENEMY (NPCs + Players/Bosses)
+-- RAID: GET NEAREST ENEMY
 -- ===============================
 local function getRaidNearestEnemy()
     local localChar = getLocalServerCharacter()
@@ -328,7 +348,6 @@ local function getRaidNearestEnemy()
     end
     
     pcall(function()
-        -- Procurar em NPCs
         local npcsFolder = Workspace.Characters.Server.NPCs
         if npcsFolder then
             for _, npc in pairs(npcsFolder:GetChildren()) do
@@ -347,7 +366,6 @@ local function getRaidNearestEnemy()
             end
         end
         
-        -- Procurar Bosses (se existir pasta)
         local bossesFolder = Workspace.Characters.Server:FindFirstChild("Bosses")
         if bossesFolder then
             for _, boss in pairs(bossesFolder:GetChildren()) do
@@ -753,10 +771,10 @@ local AutoAcceptToggle = Tabs.Farm:AddToggle("AutoAcceptQuest", {
 })
 
 -- ===============================
--- RAID TAB UI (NOVA ABA)
+-- RAID TAB UI
 -- ===============================
 
-local RaidAttackSection = Tabs.Raid:AddSection(" Raid Auto Attack")
+local RaidAttackSection = Tabs.Raid:AddSection("Raid Auto Attack")
 
 local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
     Title = "Raid Kill Aura",
@@ -771,7 +789,7 @@ local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
             end
             
             Fluent:Notify({
-                Title = " Raid Kill Aura",
+                Title = "Raid Kill Aura",
                 Content = "Ativado! Atacando inimigos...",
                 Duration = 2
             })
@@ -825,7 +843,7 @@ local RaidRangeSlider = Tabs.Raid:AddSlider("RaidAttackRange", {
     end
 })
 
-local RaidMovementSection = Tabs.Raid:AddSection(" Raid Movement")
+local RaidMovementSection = Tabs.Raid:AddSection("Raid Movement")
 
 local RaidTweenToggle = Tabs.Raid:AddToggle("RaidTweenToMob", {
     Title = "Raid Tween to Enemy",
@@ -836,7 +854,7 @@ local RaidTweenToggle = Tabs.Raid:AddToggle("RaidTweenToMob", {
         
         if Value then
             Fluent:Notify({
-                Title = " Raid Tween",
+                Title = "Raid Tween",
                 Content = "Ativado! Indo até os inimigos...",
                 Duration = 2
             })
@@ -866,10 +884,53 @@ local RaidSpeedSlider = Tabs.Raid:AddSlider("RaidTweenSpeed", {
     end
 })
 
+-- ===============================
+-- AUTO RETRY RAID SECTION (NOVO!)
+-- ===============================
+
+local RetryRaidSection = Tabs.Raid:AddSection("Auto Retry Raid")
+
+local AutoRetryToggle = Tabs.Raid:AddToggle("AutoRetryRaid", {
+    Title = "Auto Retry Raid",
+    Description = "Tenta reentrar na Raid automaticamente",
+    Default = false,
+    Callback = function(Value)
+        AutoRetryRaidEnabled = Value
+        
+        if Value then
+            task.spawn(autoRetryRaid)
+            
+            Fluent:Notify({
+                Title = "Auto Retry Raid",
+                Content = "Ativado! Tentando a cada " .. RetryRaidInterval .. "s",
+                Duration = 3
+            })
+        else
+            Fluent:Notify({
+                Title = "Auto Retry Raid",
+                Content = "Desativado!",
+                Duration = 2
+            })
+        end
+    end
+})
+
+local RetryIntervalSlider = Tabs.Raid:AddSlider("RetryRaidInterval", {
+    Title = "Retry Interval",
+    Description = "Intervalo entre tentativas (segundos)",
+    Default = 5,
+    Min = 1,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(Value)
+        RetryRaidInterval = Value
+    end
+})
+
 -- Info da Raid
 Tabs.Raid:AddParagraph({
-    Title = " Raid Info",
-    Content = "Use esta aba para configurar o farm em Raids.\nAs configurações são separadas do Farm normal.\n\n Dica: Aumente o Range e Speed para Raids!"
+    Title = "Raid Info",
+    Content = "Use esta aba para configurar o farm em Raids.\n\nAuto Retry: Reentra automaticamente quando a Raid termina.\n\nDica: Aumente o Range e Speed para Raids!"
 })
 
 -- ===============================
@@ -894,15 +955,16 @@ task.spawn(function()
         local cooldown = AttackCooldown or 0
         local range = AttackRange or 0
         local questTarget = SelectedNPC or "N/A"
-        local autoAcceptStatus = AutoAcceptQuestEnabled and "" or ""
-        local autoExecuteStatus = AutoExecuteOnTeleport and "" or ""
-        local tweenStatus = TweenToMobEnabled and "" or ""
-        local skillName = UseFugaSkill and "Fuga " or "Punch "
+        local autoAcceptStatus = AutoAcceptQuestEnabled and "ON" or "OFF"
+        local autoExecuteStatus = AutoExecuteOnTeleport and "ON" or "OFF"
+        local tweenStatus = TweenToMobEnabled and "ON" or "OFF"
+        local skillName = UseFugaSkill and "Fuga" or "Punch"
         
         -- Raid Status
-        local raidStatus = RaidAutoAttackEnabled and "" or ""
-        local raidSkill = RaidUseFugaSkill and "Fuga " or "Punch "
-        local raidTweenStatus = RaidTweenToMobEnabled and "" or ""
+        local raidStatus = RaidAutoAttackEnabled and "ON" or "OFF"
+        local raidSkill = RaidUseFugaSkill and "Fuga" or "Punch"
+        local raidTweenStatus = RaidTweenToMobEnabled and "ON" or "OFF"
+        local autoRetryStatus = AutoRetryRaidEnabled and "ON" or "OFF"
 
         local elapsedTime = math.floor(os.clock() - startTime)
         local minutes = math.floor(elapsedTime / 60)
@@ -916,25 +978,26 @@ task.spawn(function()
             local raidEnemy, raidDist = getRaidNearestEnemy()
 
             text = string.format(
-                " FARM \n" ..
-                " Kill Aura: %s\n" ..
-                " Target: %s\n" ..
-                " Distance: %.1f studs\n" ..
-                " Skill: %s\n" ..
-                " Tween: %s\n" ..
-                "\n RAID \n" ..
-                " Raid Aura: %s\n" ..
-                " Raid Target: %s\n" ..
-                " Raid Distance: %.1f studs\n" ..
-                " Raid Skill: %s\n" ..
-                " Raid Tween: %s\n" ..
-                "\n INFO \n" ..
-                " Slot: %d\n" ..
-                " Auto Quest: %s\n" ..
-                " Auto Execute: %s\n" ..
-                " Executor: %s\n" ..
-                " Time: %s",
-                AutoAttackEnabled and "" or "",
+                "=== FARM ===\n" ..
+                "Kill Aura: %s\n" ..
+                "Target: %s\n" ..
+                "Distance: %.1f studs\n" ..
+                "Skill: %s\n" ..
+                "Tween: %s\n" ..
+                "\n=== RAID ===\n" ..
+                "Raid Aura: %s\n" ..
+                "Raid Target: %s\n" ..
+                "Raid Distance: %.1f studs\n" ..
+                "Raid Skill: %s\n" ..
+                "Raid Tween: %s\n" ..
+                "Auto Retry: %s (%ds)\n" ..
+                "\n=== INFO ===\n" ..
+                "Slot: %d\n" ..
+                "Auto Quest: %s\n" ..
+                "Auto Execute: %s\n" ..
+                "Executor: %s\n" ..
+                "Time: %s",
+                AutoAttackEnabled and "ON" or "OFF",
                 npc and npc.Name or "Procurando...",
                 dist or 0,
                 skillName,
@@ -944,6 +1007,8 @@ task.spawn(function()
                 raidDist or 0,
                 raidSkill,
                 raidTweenStatus,
+                autoRetryStatus,
+                RetryRaidInterval,
                 slot,
                 autoAcceptStatus,
                 autoExecuteStatus,
@@ -952,21 +1017,24 @@ task.spawn(function()
             )
         else
             text = string.format(
-                " FARM \n" ..
-                " Kill Aura:  Disabled\n" ..
-                " Skill: %s\n" ..
-                "\n RAID \n" ..
-                " Raid Aura:  Disabled\n" ..
-                " Raid Skill: %s\n" ..
-                "\n INFO \n" ..
-                " Slot: %d\n" ..
-                " Quest NPC: %s\n" ..
-                " Auto Quest: %s\n" ..
-                " Auto Execute: %s\n" ..
-                " Executor: %s\n" ..
-                " Time: %s",
+                "=== FARM ===\n" ..
+                "Kill Aura: OFF\n" ..
+                "Skill: %s\n" ..
+                "\n=== RAID ===\n" ..
+                "Raid Aura: OFF\n" ..
+                "Raid Skill: %s\n" ..
+                "Auto Retry: %s (%ds)\n" ..
+                "\n=== INFO ===\n" ..
+                "Slot: %d\n" ..
+                "Quest NPC: %s\n" ..
+                "Auto Quest: %s\n" ..
+                "Auto Execute: %s\n" ..
+                "Executor: %s\n" ..
+                "Time: %s",
                 skillName,
                 raidSkill,
+                autoRetryStatus,
+                RetryRaidInterval,
                 slot,
                 questTarget,
                 autoAcceptStatus,
@@ -992,13 +1060,13 @@ local AutoExecSection = Tabs.Settings:AddSection("Auto Execute")
 local AutoExecToggle = Tabs.Settings:AddToggle("AutoExecuteToggle", {
     Title = "Auto Execute on Teleport",
     Description = IsExecutorSupported 
-        and " Reexecuta após teleport (Place/SubPlace)" 
-        or " Executor não suporta: " .. ExecutorName,
+        and "Reexecuta após teleport (Place/SubPlace)" 
+        or "Executor não suporta: " .. ExecutorName,
     Default = false,
     Callback = function(Value)
         if not IsExecutorSupported then
             Fluent:Notify({
-                Title = " Não Suportado",
+                Title = "Não Suportado",
                 Content = "Seu executor (" .. ExecutorName .. ") não suporta queue_on_teleport!",
                 Duration = 4
             })
@@ -1012,7 +1080,7 @@ local AutoExecToggle = Tabs.Settings:AddToggle("AutoExecuteToggle", {
             
             if success then
                 Fluent:Notify({
-                    Title = " Auto Execute",
+                    Title = "Auto Execute",
                     Content = "Ativado! Script será recarregado após teleport.",
                     Duration = 3
                 })
@@ -1028,9 +1096,9 @@ local AutoExecToggle = Tabs.Settings:AddToggle("AutoExecuteToggle", {
 })
 
 Tabs.Settings:AddParagraph({
-    Title = " Executor Info",
+    Title = "Executor Info",
     Content = "Executor: " .. ExecutorName .. 
-              "\nQueue: " .. (IsExecutorSupported and " Suportado" or " Não Suportado") ..
+              "\nQueue: " .. (IsExecutorSupported and "Suportado" or "Não Suportado") ..
               "\nPlaceId: " .. game.PlaceId
 })
 
@@ -1056,6 +1124,6 @@ Fluent:Notify({
     Duration = 4
 })
 
-print("[Kill Hub]  Script carregado!")
+print("[Kill Hub] Script carregado!")
 print("[Kill Hub] Executor:", ExecutorName)
 print("[Kill Hub] Queue Suportado:", IsExecutorSupported)
