@@ -19,6 +19,21 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ===============================
+-- PLAYER VARIABLES
+-- ===============================
+local SpeedEnabled = false
+local SpeedValue = 16
+local JumpPowerEnabled = false
+local JumpPowerValue = 50
+local DefaultWalkSpeed = 16
+local DefaultJumpPower = 50
+local PlayerSpeedConnection = nil
+local SelectedPlayer = nil
+local TweenToPlayerEnabled = false
+local PlayerTweenSpeed = 200
+local PlayerCurrentTween = nil
+
+-- ===============================
 -- FARM VARIABLES
 -- ===============================
 local AutoAttackEnabled = false
@@ -27,7 +42,8 @@ local AttackRange = 20
 local LastAttackTime = 0
 local AttackConnection = nil
 local TweenToMobEnabled = false
-local TweenSpeed = 100
+local TweenSpeed = 200
+local TweenOffset = 5
 local CurrentTween = nil
 local CurrentSlot = 0
 local AutoQuestEnabled = false
@@ -45,7 +61,8 @@ local RaidAttackRange = 50
 local RaidLastAttackTime = 0
 local RaidAttackConnection = nil
 local RaidTweenToMobEnabled = false
-local RaidTweenSpeed = 150
+local RaidTweenSpeed = 300
+local RaidTweenOffset = 5
 local RaidCurrentTween = nil
 local RaidUseFugaSkill = false
 local RaidCurrentSkill = "Punch"
@@ -177,9 +194,9 @@ local Minimizer = Fluent:CreateMinimizer({
 })
 
 local Tabs = {
+    
     Farm = Window:AddTab({ Title = "Farm", Icon = "swords" }),
     Raid = Window:AddTab({ Title = "Raid", Icon = "skull" }),
-    Stats = Window:AddTab({ Title = "Status", Icon = "server" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
@@ -254,7 +271,229 @@ local function getNPCList()
 end
 
 -- ===============================
--- FARM: GET NEAREST NPC
+-- PLAYER FUNCTIONS
+-- ===============================
+
+local function getPlayerList()
+    local playerList = {}
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(playerList, player.Name)
+        end
+    end
+    
+    table.sort(playerList)
+    return playerList
+end
+
+local function getPlayerCharacter(playerName)
+    local success, result = pcall(function()
+        local serverPlayers = Workspace.Characters.Server.Players:GetChildren()
+        
+        for _, char in pairs(serverPlayers) do
+            if char.Name:find(playerName) then
+                return char
+            end
+        end
+        
+        return nil
+    end)
+    
+    return success and result or nil
+end
+
+local function applySpeed()
+    pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = SpeedEnabled and SpeedValue or DefaultWalkSpeed
+            end
+        end
+    end)
+end
+
+local function applyJumpPower()
+    pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.JumpPower = JumpPowerEnabled and JumpPowerValue or DefaultJumpPower
+                humanoid.UseJumpPower = true
+            end
+        end
+    end)
+end
+
+local function tweenToPlayer(playerName)
+    if not playerName then return end
+    
+    local localChar = getLocalServerCharacter()
+    if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then 
+        -- Fallback para character normal
+        localChar = LocalPlayer.Character
+        if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then
+            return 
+        end
+    end
+    
+    local targetChar = getPlayerCharacter(playerName)
+    if not targetChar or not targetChar:FindFirstChild("HumanoidRootPart") then 
+        -- Fallback para character normal do jogador alvo
+        local targetPlayer = Players:FindFirstChild(playerName)
+        if targetPlayer and targetPlayer.Character then
+            targetChar = targetPlayer.Character
+            if not targetChar:FindFirstChild("HumanoidRootPart") then
+                return
+            end
+        else
+            return
+        end
+    end
+    
+    local targetPos = targetChar.HumanoidRootPart.Position
+    local currentPos = localChar.HumanoidRootPart.Position
+    local distance = getDistance(currentPos, targetPos)
+    
+    if distance <= 5 then 
+        Fluent:Notify({
+            Title = "Tween to Player",
+            Content = "Você já está perto de " .. playerName,
+            Duration = 2
+        })
+        return 
+    end
+    
+    if PlayerCurrentTween then
+        PlayerCurrentTween:Cancel()
+        PlayerCurrentTween = nil
+    end
+    
+    local direction = (targetPos - currentPos).Unit
+    local finalPosition = targetPos - (direction * 5)
+    
+    local targetCFrame = CFrame.new(finalPosition) * CFrame.Angles(0, math.atan2(-direction.X, -direction.Z), 0)
+    
+    local tweenTime = math.max(distance / PlayerTweenSpeed, 0.1)
+    
+    local tweenInfo = TweenInfo.new(
+        tweenTime,
+        Enum.EasingStyle.Linear,
+        Enum.EasingDirection.Out
+    )
+    
+    PlayerCurrentTween = TweenService:Create(
+        localChar.HumanoidRootPart,
+        tweenInfo,
+        {CFrame = targetCFrame}
+    )
+    
+    PlayerCurrentTween:Play()
+    
+    Fluent:Notify({
+        Title = "Tween to Player",
+        Content = "Indo até " .. playerName .. " (" .. math.floor(distance) .. " studs)",
+        Duration = 2
+    })
+end
+
+-- ===============================
+-- FUNÇÃO: VERIFICA SE É "Lv.1 Punching Bag"
+-- ===============================
+local function isPunchingBag(npc)
+    if not npc then return false end
+    
+    local isImmortal = false
+    pcall(function()
+        local hrp = npc:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local charDebug = hrp:FindFirstChild("CharDebug")
+            if charDebug then
+                local frame = charDebug:FindFirstChild("Frame")
+                if frame then
+                    local immortal = frame:FindFirstChild("Immortal")
+                    if immortal and immortal:IsA("TextLabel") then
+                        if immortal.Text == "Is Immortal: true" then
+                            isImmortal = true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    if isImmortal then
+        return true
+    end
+    
+    local isPunchingBagClient = false
+    pcall(function()
+        local clientFolder = Workspace.Characters.Client
+        if clientFolder then
+            for _, clientModel in pairs(clientFolder:GetChildren()) do
+                if clientModel:IsA("Model") then
+                    local billboard = clientModel:FindFirstChild("BillboardGui")
+                    if billboard then
+                        local frame = billboard:FindFirstChild("Frame")
+                        if frame then
+                            local children = frame:GetChildren()
+                            
+                            if children[8] then
+                                local textLabel = children[8]:FindFirstChild("TextLabel")
+                                if textLabel and textLabel:IsA("TextLabel") then
+                                    if textLabel.Text == "Lv.1 Punching Bag" then
+                                        local clientHRP = clientModel:FindFirstChild("HumanoidRootPart")
+                                        local serverHRP = npc:FindFirstChild("HumanoidRootPart")
+                                        
+                                        if clientHRP and serverHRP then
+                                            local dist = (clientHRP.Position - serverHRP.Position).Magnitude
+                                            if dist < 10 then
+                                                isPunchingBagClient = true
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            if not isPunchingBagClient then
+                                for _, child in pairs(children) do
+                                    pcall(function()
+                                        local label = child:FindFirstChild("TextLabel")
+                                        if label and label:IsA("TextLabel") then
+                                            if label.Text == "Lv.1 Punching Bag" then
+                                                local clientHRP = clientModel:FindFirstChild("HumanoidRootPart")
+                                                local serverHRP = npc:FindFirstChild("HumanoidRootPart")
+                                                
+                                                if clientHRP and serverHRP then
+                                                    local dist = (clientHRP.Position - serverHRP.Position).Magnitude
+                                                    if dist < 10 then
+                                                        isPunchingBagClient = true
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    if isPunchingBagClient then
+        return true
+    end
+    
+    return false
+end
+
+-- ===============================
+-- FARM: GET NEAREST NPC (DISTÂNCIA INFINITA)
 -- ===============================
 local function getNearestNPC()
     local localChar = getLocalServerCharacter()
@@ -266,16 +505,16 @@ local function getNearestNPC()
     local nearestNPC = nil
     local shortestDistance = math.huge
     
-    if not TweenToMobEnabled then
-        shortestDistance = AttackRange
-    end
-    
     pcall(function()
         local npcsFolder = Workspace.Characters.Server.NPCs
         if not npcsFolder then return end
         
         for _, npc in pairs(npcsFolder:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChild("Humanoid") then
+                if isPunchingBag(npc) then
+                    continue
+                end
+                
                 if AutoQuestEnabled and SelectedNPC and npc.Name ~= SelectedNPC then
                     continue
                 end
@@ -298,7 +537,7 @@ local function getNearestNPC()
 end
 
 -- ===============================
--- RAID: GET NEAREST ENEMY
+-- RAID: GET NEAREST ENEMY (DISTÂNCIA INFINITA)
 -- ===============================
 local function getRaidNearestEnemy()
     local localChar = getLocalServerCharacter()
@@ -310,15 +549,15 @@ local function getRaidNearestEnemy()
     local nearestEnemy = nil
     local shortestDistance = math.huge
     
-    if not RaidTweenToMobEnabled then
-        shortestDistance = RaidAttackRange
-    end
-    
     pcall(function()
         local npcsFolder = Workspace.Characters.Server.NPCs
         if npcsFolder then
             for _, npc in pairs(npcsFolder:GetChildren()) do
                 if npc:IsA("Model") and npc:FindFirstChild("Humanoid") then
+                    if isPunchingBag(npc) then
+                        continue
+                    end
+                    
                     local humanoid = npc.Humanoid
                     
                     if humanoid.Health > 0 and npc:FindFirstChild("HumanoidRootPart") then
@@ -363,6 +602,8 @@ local function performStartSkill(targetNPC)
     local localChar = getLocalServerCharacter()
     if not localChar then return false end
     
+    if isPunchingBag(targetNPC) then return false end
+    
     pcall(function()
         local skillName = UseFugaSkill and "Fuga" or "Punch"
         CurrentSkill = skillName
@@ -383,6 +624,8 @@ end
 local function performDamage(targetNPC)
     local localChar = getLocalServerCharacter()
     if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return false end
+    
+    if isPunchingBag(targetNPC) then return false end
     
     pcall(function()
         local skillName = UseFugaSkill and "Fuga" or "Punch"
@@ -415,6 +658,8 @@ local function raidPerformStartSkill(targetNPC)
     local localChar = getLocalServerCharacter()
     if not localChar then return false end
     
+    if isPunchingBag(targetNPC) then return false end
+    
     pcall(function()
         local skillName = RaidUseFugaSkill and "Fuga" or "Punch"
         RaidCurrentSkill = skillName
@@ -435,6 +680,8 @@ end
 local function raidPerformDamage(targetNPC)
     local localChar = getLocalServerCharacter()
     if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return false end
+    
+    if isPunchingBag(targetNPC) then return false end
     
     pcall(function()
         local skillName = RaidUseFugaSkill and "Fuga" or "Punch"
@@ -460,31 +707,41 @@ local function raidPerformDamage(targetNPC)
 end
 
 -- ===============================
--- FARM: TWEEN TO MOB
+-- FARM: TWEEN TO MOB (DISTÂNCIA INFINITA)
 -- ===============================
 
 local function tweenToMob(targetNPC)
     if not TweenToMobEnabled then return end
+    if not targetNPC then return end
+    
+    if isPunchingBag(targetNPC) then 
+        return 
+    end
     
     local localChar = getLocalServerCharacter()
     if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return end
-    if not targetNPC or not targetNPC:FindFirstChild("HumanoidRootPart") then return end
+    if not targetNPC:FindFirstChild("HumanoidRootPart") then return end
     
     local targetPos = targetNPC.HumanoidRootPart.Position
     local currentPos = localChar.HumanoidRootPart.Position
     local distance = getDistance(currentPos, targetPos)
     
-    if distance <= AttackRange * 0.8 then return end
+    if distance <= TweenOffset + 2 then return end
     
     if CurrentTween then
         CurrentTween:Cancel()
+        CurrentTween = nil
     end
     
     local direction = (targetPos - currentPos).Unit
-    local targetCFrame = CFrame.new(targetPos - (direction * (AttackRange * 0.6)))
+    local finalPosition = targetPos - (direction * TweenOffset)
+    
+    local targetCFrame = CFrame.new(finalPosition) * CFrame.Angles(0, math.atan2(-direction.X, -direction.Z), 0)
+    
+    local tweenTime = math.max(distance / TweenSpeed, 0.05)
     
     local tweenInfo = TweenInfo.new(
-        distance / TweenSpeed,
+        tweenTime,
         Enum.EasingStyle.Linear,
         Enum.EasingDirection.Out
     )
@@ -499,31 +756,41 @@ local function tweenToMob(targetNPC)
 end
 
 -- ===============================
--- RAID: TWEEN TO MOB
+-- RAID: TWEEN TO MOB (DISTÂNCIA INFINITA)
 -- ===============================
 
 local function raidTweenToMob(targetNPC)
     if not RaidTweenToMobEnabled then return end
+    if not targetNPC then return end
+    
+    if isPunchingBag(targetNPC) then 
+        return 
+    end
     
     local localChar = getLocalServerCharacter()
     if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return end
-    if not targetNPC or not targetNPC:FindFirstChild("HumanoidRootPart") then return end
+    if not targetNPC:FindFirstChild("HumanoidRootPart") then return end
     
     local targetPos = targetNPC.HumanoidRootPart.Position
     local currentPos = localChar.HumanoidRootPart.Position
     local distance = getDistance(currentPos, targetPos)
     
-    if distance <= RaidAttackRange * 0.8 then return end
+    if distance <= RaidTweenOffset + 2 then return end
     
     if RaidCurrentTween then
         RaidCurrentTween:Cancel()
+        RaidCurrentTween = nil
     end
     
     local direction = (targetPos - currentPos).Unit
-    local targetCFrame = CFrame.new(targetPos - (direction * (RaidAttackRange * 0.6)))
+    local finalPosition = targetPos - (direction * RaidTweenOffset)
+    
+    local targetCFrame = CFrame.new(finalPosition) * CFrame.Angles(0, math.atan2(-direction.X, -direction.Z), 0)
+    
+    local tweenTime = math.max(distance / RaidTweenSpeed, 0.05)
     
     local tweenInfo = TweenInfo.new(
-        distance / RaidTweenSpeed,
+        tweenTime,
         Enum.EasingStyle.Linear,
         Enum.EasingDirection.Out
     )
@@ -556,10 +823,9 @@ local function autoAttack()
     
     local targetNPC, distance = getNearestNPC()
     
-    if targetNPC then
-        if TweenToMobEnabled and distance > AttackRange * 0.8 then
+    if targetNPC and not isPunchingBag(targetNPC) then
+        if TweenToMobEnabled and distance > TweenOffset + 2 then
             tweenToMob(targetNPC)
-            task.wait(0.1)
         end
         
         local localChar = getLocalServerCharacter()
@@ -595,14 +861,12 @@ local function raidAutoAttack()
     
     local targetEnemy, distance = getRaidNearestEnemy()
     
-    -- Se tem mob, ataca
-    if targetEnemy then
+    if targetEnemy and not isPunchingBag(targetEnemy) then
         HadMobsBefore = true
         IsRetrying = false
         
-        if RaidTweenToMobEnabled and distance > RaidAttackRange * 0.8 then
+        if RaidTweenToMobEnabled and distance > RaidTweenOffset + 2 then
             raidTweenToMob(targetEnemy)
-            task.wait(0.1)
         end
         
         local localChar = getLocalServerCharacter()
@@ -621,12 +885,9 @@ local function raidAutoAttack()
             end
         end
     else
-        -- Não tem mais mob - se tinha antes, faz retry
         if HadMobsBefore and not IsRetrying then
             IsRetrying = true
             HadMobsBefore = false
-            
-            print("[Auto Retry] Todos mobs morreram! Aguardando 5 segundos...")
             
             Fluent:Notify({
                 Title = "Raid Finalizada!",
@@ -634,7 +895,6 @@ local function raidAutoAttack()
                 Duration = 5
             })
             
-            -- Executa retry após 5 segundos
             task.spawn(function()
                 task.wait(5)
                 
@@ -642,8 +902,6 @@ local function raidAutoAttack()
                     pcall(function()
                         game:GetService("ReplicatedStorage").NetworkComm.RaidsService.RetryRaid_Method:InvokeServer()
                     end)
-                    
-                    print("[Auto Retry] RetryRaid executado!")
                     
                     Fluent:Notify({
                         Title = "Auto Retry",
@@ -658,6 +916,8 @@ local function raidAutoAttack()
     end
 end
 
+
+
 -- ===============================
 -- FARM TAB UI
 -- ===============================
@@ -666,7 +926,6 @@ local AutoAttackSection = Tabs.Farm:AddSection("Auto Attack")
 
 local AutoAttackToggle = Tabs.Farm:AddToggle("AutoAttack", {
     Title = "Kill Aura",
-    Description = "Ataca automaticamente NPCs próximos",
     Default = false,
     Callback = function(Value)
         AutoAttackEnabled = Value
@@ -681,7 +940,6 @@ local AutoAttackToggle = Tabs.Farm:AddToggle("AutoAttack", {
 
 local FugaToggle = Tabs.Farm:AddToggle("UseFuga", {
     Title = "Fuga Skill Aura (Need Shrine CT)",
-    Description = "Troca de Punch para Fuga (mais dano)",
     Default = false,
     Callback = function(Value)
         UseFugaSkill = Value
@@ -691,7 +949,6 @@ local FugaToggle = Tabs.Farm:AddToggle("UseFuga", {
 
 local CooldownSlider = Tabs.Farm:AddSlider("AttackCooldown", {
     Title = "Attack Cooldown",
-    Description = "Tempo entre ataques (segundos)",
     Default = 0.2,
     Min = 0.1,
     Max = 2,
@@ -703,7 +960,6 @@ local CooldownSlider = Tabs.Farm:AddSlider("AttackCooldown", {
 
 local RangeSlider = Tabs.Farm:AddSlider("AttackRange", {
     Title = "Attack Range",
-    Description = "Alcance do ataque (studs)",
     Default = 20,
     Min = 5,
     Max = 450,
@@ -717,26 +973,36 @@ local MovementSection = Tabs.Farm:AddSection("Movement")
 
 local TweenToggle = Tabs.Farm:AddToggle("TweenToMob", {
     Title = "Tween to Mob",
-    Description = "Move automaticamente até os NPCs",
     Default = false,
     Callback = function(Value)
         TweenToMobEnabled = Value
         
         if not Value and CurrentTween then
             CurrentTween:Cancel()
+            CurrentTween = nil
         end
     end
 })
 
-local SpeedSlider = Tabs.Farm:AddSlider("TweenSpeed", {
+local SpeedSliderFarm = Tabs.Farm:AddSlider("TweenSpeed", {
     Title = "Tween Speed",
-    Description = "Velocidade de movimento (studs/s)",
-    Default = 100,
+    Default = 200,
     Min = 50,
-    Max = 300,
+    Max = 800,
     Rounding = 0,
     Callback = function(Value)
         TweenSpeed = Value
+    end
+})
+
+local OffsetSlider = Tabs.Farm:AddSlider("TweenOffset", {
+    Title = "Tween Offset",
+    Default = 5,
+    Min = 0,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(Value)
+        TweenOffset = Value
     end
 })
 
@@ -744,7 +1010,6 @@ local InventorySection = Tabs.Farm:AddSection("Inventory")
 
 local SlotSlider = Tabs.Farm:AddSlider("InventorySlot", {
     Title = "Inventory Slot",
-    Description = "",
     Default = 0,
     Min = 0,
     Max = 5,
@@ -758,7 +1023,6 @@ local QuestSection = Tabs.Farm:AddSection("Auto Quest")
 
 local NPCDropdown = Tabs.Farm:AddDropdown("SelectNPC", {
     Title = "Select Target Npc Quest",
-    Description = "Escolha o NPC para farmar",
     Values = getNPCList(),
     Multi = false,
     Default = 1,
@@ -769,7 +1033,6 @@ local NPCDropdown = Tabs.Farm:AddDropdown("SelectNPC", {
 
 local AutoAcceptToggle = Tabs.Farm:AddToggle("AutoAcceptQuest", {
     Title = "Auto Quest",
-    Description = "Aceita automaticamente a quest do NPC selecionado",
     Default = false,
     Callback = function(Value)
         AutoAcceptQuestEnabled = Value
@@ -784,7 +1047,6 @@ local RaidAttackSection = Tabs.Raid:AddSection("Raid Auto Attack")
 
 local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
     Title = "Raid Kill Aura (Auto Retry)",
-    Description = "Ataca mobs e reentra automaticamente quando morrem",
     Default = false,
     Callback = function(Value)
         RaidAutoAttackEnabled = Value
@@ -798,10 +1060,15 @@ local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
             
             Fluent:Notify({
                 Title = "Raid Kill Aura",
-                Content = "Ativado! Auto Retry após mobs morrerem.",
+                Content = "Ativado!",
                 Duration = 2
             })
         else
+            if RaidCurrentTween then
+                RaidCurrentTween:Cancel()
+                RaidCurrentTween = nil
+            end
+            
             Fluent:Notify({
                 Title = "Raid Kill Aura",
                 Content = "Desativado!",
@@ -813,7 +1080,6 @@ local RaidAutoAttackToggle = Tabs.Raid:AddToggle("RaidAutoAttack", {
 
 local RaidFugaToggle = Tabs.Raid:AddToggle("RaidUseFuga", {
     Title = "Raid Fuga Skill (Need Shrine CT)",
-    Description = "Usa Fuga ao invés de Punch na Raid",
     Default = false,
     Callback = function(Value)
         RaidUseFugaSkill = Value
@@ -823,7 +1089,6 @@ local RaidFugaToggle = Tabs.Raid:AddToggle("RaidUseFuga", {
 
 local RaidCooldownSlider = Tabs.Raid:AddSlider("RaidAttackCooldown", {
     Title = "Raid Attack Cooldown",
-    Description = "Tempo entre ataques na Raid (segundos)",
     Default = 0.3,
     Min = 0.1,
     Max = 2,
@@ -835,7 +1100,6 @@ local RaidCooldownSlider = Tabs.Raid:AddSlider("RaidAttackCooldown", {
 
 local RaidRangeSlider = Tabs.Raid:AddSlider("RaidAttackRange", {
     Title = "Raid Attack Range",
-    Description = "Alcance do ataque na Raid (studs)",
     Default = 50,
     Min = 5,
     Max = 500,
@@ -849,145 +1113,43 @@ local RaidMovementSection = Tabs.Raid:AddSection("Raid Movement")
 
 local RaidTweenToggle = Tabs.Raid:AddToggle("RaidTweenToMob", {
     Title = "Raid Tween to Enemy",
-    Description = "Move automaticamente até os inimigos na Raid",
     Default = false,
     Callback = function(Value)
         RaidTweenToMobEnabled = Value
         
         if not Value and RaidCurrentTween then
             RaidCurrentTween:Cancel()
+            RaidCurrentTween = nil
         end
     end
 })
 
 local RaidSpeedSlider = Tabs.Raid:AddSlider("RaidTweenSpeed", {
     Title = "Raid Tween Speed",
-    Description = "Velocidade de movimento na Raid (studs/s)",
-    Default = 150,
+    Default = 300,
     Min = 50,
-    Max = 400,
+    Max = 800,
     Rounding = 0,
     Callback = function(Value)
         RaidTweenSpeed = Value
     end
 })
 
--- Info da Raid
+local RaidOffsetSlider = Tabs.Raid:AddSlider("RaidTweenOffset", {
+    Title = "Raid Tween Offset",
+    Default = 5,
+    Min = 0,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(Value)
+        RaidTweenOffset = Value
+    end
+})
+
 Tabs.Raid:AddParagraph({
     Title = "Raid Info",
-    Content = "O Raid Kill Aura já inclui Auto Retry!\nQuando todos os mobs morrerem, espera 5 segundos e reentra automaticamente."
+    Content = "Auto Retry após 5 segundos"
 })
-
--- ===============================
--- STATS TAB
--- ===============================
-
-local bb = Tabs.Stats:AddParagraph({
-    Title = "Status",
-    Content = "Carregando..."
-})
-
-local lastText = ""
-local startTime = os.clock()
-
-task.spawn(function()
-    while task.wait(1) do
-        if not bb or not bb.SetDesc then
-            break
-        end
-
-        local slot = CurrentSlot or 0
-        local questTarget = SelectedNPC or "N/A"
-        local autoAcceptStatus = AutoAcceptQuestEnabled and "ON" or "OFF"
-        local autoExecuteStatus = AutoExecuteOnTeleport and "ON" or "OFF"
-        local tweenStatus = TweenToMobEnabled and "ON" or "OFF"
-        local skillName = UseFugaSkill and "Fuga" or "Punch"
-        
-        local raidStatus = RaidAutoAttackEnabled and "ON" or "OFF"
-        local raidSkill = RaidUseFugaSkill and "Fuga" or "Punch"
-        local raidTweenStatus = RaidTweenToMobEnabled and "ON" or "OFF"
-        local retryStatus = IsRetrying and "Aguardando..." or "Pronto"
-
-        local elapsedTime = math.floor(os.clock() - startTime)
-        local minutes = math.floor(elapsedTime / 60)
-        local seconds = elapsedTime % 60
-        local formattedTime = string.format("%02d:%02d", minutes, seconds)
-
-        local text
-
-        if AutoAttackEnabled or RaidAutoAttackEnabled then
-            local npc, dist = getNearestNPC()
-            local raidEnemy, raidDist = getRaidNearestEnemy()
-
-            text = string.format(
-                "=== FARM ===\n" ..
-                "Kill Aura: %s\n" ..
-                "Target: %s\n" ..
-                "Distance: %.1f studs\n" ..
-                "Skill: %s\n" ..
-                "Tween: %s\n" ..
-                "\n=== RAID ===\n" ..
-                "Raid Aura: %s\n" ..
-                "Raid Target: %s\n" ..
-                "Raid Distance: %.1f studs\n" ..
-                "Raid Skill: %s\n" ..
-                "Raid Tween: %s\n" ..
-                "Auto Retry: %s\n" ..
-                "\n=== INFO ===\n" ..
-                "Slot: %d\n" ..
-                "Auto Quest: %s\n" ..
-                "Auto Execute: %s\n" ..
-                "Executor: %s\n" ..
-                "Time: %s",
-                AutoAttackEnabled and "ON" or "OFF",
-                npc and npc.Name or "Procurando...",
-                dist or 0,
-                skillName,
-                tweenStatus,
-                raidStatus,
-                raidEnemy and raidEnemy.Name or "Nenhum (Retry em breve)",
-                raidDist or 0,
-                raidSkill,
-                raidTweenStatus,
-                retryStatus,
-                slot,
-                autoAcceptStatus,
-                autoExecuteStatus,
-                ExecutorName,
-                formattedTime
-            )
-        else
-            text = string.format(
-                "=== FARM ===\n" ..
-                "Kill Aura: OFF\n" ..
-                "Skill: %s\n" ..
-                "\n=== RAID ===\n" ..
-                "Raid Aura: OFF\n" ..
-                "Raid Skill: %s\n" ..
-                "\n=== INFO ===\n" ..
-                "Slot: %d\n" ..
-                "Quest NPC: %s\n" ..
-                "Auto Quest: %s\n" ..
-                "Auto Execute: %s\n" ..
-                "Executor: %s\n" ..
-                "Time: %s",
-                skillName,
-                raidSkill,
-                slot,
-                questTarget,
-                autoAcceptStatus,
-                autoExecuteStatus,
-                ExecutorName,
-                formattedTime
-            )
-        end
-
-        if text ~= lastText then
-            lastText = text
-            bb:SetDesc(text)
-        end
-    end
-end)
 
 -- ===============================
 -- SETTINGS TAB
@@ -1049,7 +1211,7 @@ SaveManager:LoadAutoloadConfig()
 -- ===============================
 Fluent:Notify({
     Title = "Kill Hub",
-    Content = "Carregado com sucesso!\nExecutor: " .. ExecutorName,
+    Content = "Welcome",
     Duration = 4
 })
 
